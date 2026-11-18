@@ -1,0 +1,1473 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ChemQuest AR: ภารกิจพิชิตปฏิกิริยาเคมี</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts: Prompt & Kanit for modern Thai UI -->
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;600;700;800&family=Prompt:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Tone.js for Synthesized Sound Effects (No external URLs needed) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <!-- Three.js for 3D AR Floating Molecules & Visual Effects -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <style>
+        body {
+            font-family: 'Prompt', sans-serif;
+            overflow-x: hidden;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            background-color: #090d16;
+            color: #ffffff;
+        }
+        h1, h2, h3, .font-title {
+            font-family: 'Kanit', sans-serif;
+        }
+
+        /* AR Camera & 3D Canvas Layers */
+        #ar-video {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            object-fit: cover;
+            z-index: 0;
+        }
+        #three-canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 1;
+            pointer-events: none;
+        }
+
+        /* Holographic AR HUD Overlay */
+        .ar-grid-bg {
+            background-image: 
+                linear-gradient(to right, rgba(6, 182, 212, 0.08) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(6, 182, 212, 0.08) 1px, transparent 1px);
+            background-size: 40px 40px;
+        }
+
+        .glass-hud {
+            background: rgba(15, 23, 42, 0.72);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(56, 189, 248, 0.35);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), inset 0 0 15px rgba(56, 189, 248, 0.15);
+        }
+
+        .glass-card {
+            background: rgba(30, 41, 59, 0.85);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(148, 163, 184, 0.25);
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        /* 3D Flip Card Effect for Stage 1 */
+        .perspective-1000 {
+            perspective: 1000px;
+        }
+        .flip-card-inner {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            text-align: center;
+            transition: transform 0.6s cubic-bezier(0.4, 0.2, 0.2, 1);
+            transform-style: preserve-3d;
+        }
+        .flip-card.flipped .flip-card-inner {
+            transform: rotateY(180deg);
+        }
+        .flip-card-front, .flip-card-back {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            -webkit-backface-visibility: hidden;
+            backface-visibility: hidden;
+            border-radius: 1rem;
+        }
+        .flip-card-back {
+            transform: rotateY(180deg);
+        }
+
+        /* Floating Animation */
+        @keyframes floatSlow {
+            0%, 100% { transform: translateY(0px) rotate(0deg); }
+            50% { transform: translateY(-10px) rotate(2deg); }
+        }
+        .animate-float {
+            animation: floatSlow 4s ease-in-out infinite;
+        }
+
+        /* AR Scanner Line */
+        @keyframes scanLine {
+            0% { top: 0%; opacity: 0; }
+            15% { opacity: 0.8; }
+            85% { opacity: 0.8; }
+            100% { top: 100%; opacity: 0; }
+        }
+        .ar-scanner-line {
+            position: fixed;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, #22d3ee, #38bdf8, transparent);
+            box-shadow: 0 0 12px #22d3ee;
+            z-index: 2;
+            pointer-events: none;
+            animation: scanLine 5s linear infinite;
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(15, 23, 42, 0.5);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(56, 189, 248, 0.4);
+            border-radius: 9999px;
+        }
+
+        /* Pulse Glow */
+        .glow-cyan {
+            box-shadow: 0 0 20px rgba(6, 182, 212, 0.5);
+        }
+        .glow-emerald {
+            box-shadow: 0 0 20px rgba(16, 185, 129, 0.6);
+        }
+        .glow-rose {
+            box-shadow: 0 0 20px rgba(244, 63, 94, 0.6);
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col justify-between relative">
+
+    <!-- Background AR Camera Video Feed -->
+    <video id="ar-video" autoplay playsinline muted class="hidden"></video>
+    
+    <!-- Fallback Simulated AR Lab Background (when camera is off or unavailable) -->
+    <div id="ar-sim-bg" class="fixed inset-0 z-0 bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900 ar-grid-bg">
+        <div class="absolute inset-0 bg-[radial-gradient(circle_at_50%_30%,rgba(14,165,233,0.18),transparent_65%)]"></div>
+    </div>
+
+    <!-- Three.js 3D Floating Molecules Layer -->
+    <canvas id="three-canvas"></canvas>
+
+    <!-- AR HUD Corner Brackets & Scanner -->
+    <div class="ar-scanner-line"></div>
+    <div class="fixed top-3 left-3 w-8 h-8 border-t-2 border-l-2 border-cyan-400/60 z-10 pointer-events-none rounded-tl-lg"></div>
+    <div class="fixed top-3 right-3 w-8 h-8 border-t-2 border-r-2 border-cyan-400/60 z-10 pointer-events-none rounded-tr-lg"></div>
+    <div class="fixed bottom-3 left-3 w-8 h-8 border-b-2 border-l-2 border-cyan-400/60 z-10 pointer-events-none rounded-bl-lg"></div>
+    <div class="fixed bottom-3 right-3 w-8 h-8 border-b-2 border-r-2 border-cyan-400/60 z-10 pointer-events-none rounded-br-lg"></div>
+
+    <!-- TOP HUD BAR (Visible during gameplay) -->
+    <header id="game-hud" class="hidden relative z-20 w-full max-w-5xl mx-auto px-3 pt-3 sm:pt-4">
+        <div class="glass-hud rounded-2xl p-3 sm:px-5 flex flex-wrap items-center justify-between gap-2">
+            <!-- Stage Badge -->
+            <div class="flex items-center gap-2.5">
+                <div id="hud-stage-icon" class="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center text-white font-bold shadow-lg">
+                    1
+                </div>
+                <div>
+                    <div class="text-[11px] uppercase tracking-wider text-cyan-300 font-semibold">AR MISSION</div>
+                    <div id="hud-stage-title" class="text-sm sm:text-base font-bold text-white leading-tight">ด่านที่ 1: เปิดแผ่นป้าย</div>
+                </div>
+            </div>
+
+            <!-- Timer & Score -->
+            <div class="flex items-center gap-3 sm:gap-5">
+                <!-- Timer -->
+                <div class="flex items-center gap-2 bg-slate-900/80 px-3 py-1.5 rounded-xl border border-slate-700/80">
+                    <i class="fa-solid fa-stopwatch text-amber-400 animate-pulse"></i>
+                    <span id="hud-timer" class="font-mono font-bold text-base sm:text-lg text-amber-300">00:45</span>
+                </div>
+
+                <!-- Score -->
+                <div class="flex items-center gap-2 bg-slate-900/80 px-3 py-1.5 rounded-xl border border-slate-700/80">
+                    <i class="fa-solid fa-star text-yellow-400"></i>
+                    <span id="hud-score" class="font-mono font-bold text-base sm:text-lg text-emerald-400">0</span>
+                </div>
+
+                <!-- AR Camera Toggle Button -->
+                <button onclick="toggleARCamera()" id="btn-ar-toggle" title="เปิด/ปิด กล้อง AR" class="p-2.5 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400/40 text-cyan-300 transition">
+                    <i class="fa-solid fa-camera"></i>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- MAIN CONTENT CONTAINER -->
+    <main class="relative z-20 flex-1 flex items-center justify-center w-full max-w-5xl mx-auto p-3 sm:p-5">
+
+        <!-- ==================== SCREEN 1: ATTRACTIVE COVER SCREEN ==================== -->
+        <section id="screen-cover" class="w-full max-w-2xl mx-auto text-center">
+            <div class="glass-hud rounded-3xl p-6 sm:p-10 relative overflow-hidden border-2 border-cyan-400/40 shadow-2xl">
+                <!-- Decorative Glow Orbs -->
+                <div class="absolute -top-20 -left-20 w-48 h-48 bg-cyan-500/25 rounded-full blur-3xl pointer-events-none"></div>
+                <div class="absolute -bottom-20 -right-20 w-56 h-56 bg-purple-600/25 rounded-full blur-3xl pointer-events-none"></div>
+
+                <!-- AR Status Pill -->
+                <div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-cyan-500/20 border border-cyan-400/50 text-cyan-300 text-xs sm:text-sm font-semibold mb-5">
+                    <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span>
+                    <span>INTERACTIVE AR SCIENCE GAME • ม.ต้น</span>
+                </div>
+
+                <!-- Hero Graphic / Badge -->
+                <div class="relative w-28 h-28 sm:w-32 sm:h-32 mx-auto mb-5 animate-float">
+                    <div class="absolute inset-0 bg-gradient-to-tr from-cyan-400 via-blue-500 to-purple-500 rounded-3xl rotate-6 opacity-75 blur-md"></div>
+                    <div class="relative w-full h-full bg-slate-900/90 border-2 border-cyan-300/60 rounded-3xl flex flex-col items-center justify-center shadow-xl">
+                        <i class="fa-solid fa-flask-vial text-4xl sm:text-5xl text-transparent bg-clip-text bg-gradient-to-r from-cyan-300 to-emerald-400 mb-1"></i>
+                        <span class="text-[10px] font-bold tracking-widest text-cyan-200">AR LAB</span>
+                    </div>
+                    <!-- Floating mini icons -->
+                    <div class="absolute -top-3 -right-3 w-10 h-10 rounded-full bg-emerald-500/90 flex items-center justify-center shadow-lg border border-white/30">
+                        <i class="fa-solid fa-seedling text-white text-sm"></i>
+                    </div>
+                    <div class="absolute -bottom-2 -left-3 w-10 h-10 rounded-full bg-rose-500/90 flex items-center justify-center shadow-lg border border-white/30">
+                        <i class="fa-solid fa-smog text-white text-sm"></i>
+                    </div>
+                </div>
+
+                <!-- Game Title -->
+                <h1 class="text-3xl sm:text-5xl font-extrabold tracking-tight mb-2 text-transparent bg-clip-text bg-gradient-to-r from-cyan-300 via-white to-emerald-300 drop-shadow">
+                    ChemQuest AR
+                </h1>
+                <h2 class="text-lg sm:text-2xl font-bold text-amber-300 mb-4">
+                    ภารกิจพิชิตปฏิกิริยาเคมี: คุณหรือโทษ?
+                </h2>
+
+                <p class="text-slate-300 text-sm sm:text-base max-w-lg mx-auto mb-6 leading-relaxed">
+                    สวมบทบาทนักวิทยาศาสตร์ AR สำรวจปฏิกิริยาเคมีรอบตัว! ผ่านภารกิจทั้ง <span class="text-cyan-300 font-semibold">3 ด่านสุดท้าทาย</span> แข่งกับเวลาเพื่อสะสมคะแนนและรับโบนัสพิเศษ
+                </p>
+
+                <!-- 3 Stages Preview Cards -->
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-7 text-left">
+                    <div class="bg-slate-900/70 border border-cyan-500/30 rounded-2xl p-3.5 flex sm:flex-col items-center sm:items-start gap-3">
+                        <div class="w-10 h-10 rounded-xl bg-cyan-500/20 text-cyan-300 flex items-center justify-center shrink-0 font-bold">
+                            <i class="fa-solid fa-layer-group"></i>
+                        </div>
+                        <div>
+                            <div class="text-xs text-cyan-400 font-bold">ด่านที่ 1 • ง่าย</div>
+                            <div class="text-sm font-semibold text-white">เปิดแผ่นป้าย AR</div>
+                            <div class="text-[11px] text-slate-400">จับคู่ภาพและชื่อปรากฏการณ์</div>
+                        </div>
+                    </div>
+
+                    <div class="bg-slate-900/70 border border-purple-500/30 rounded-2xl p-3.5 flex sm:flex-col items-center sm:items-start gap-3">
+                        <div class="w-10 h-10 rounded-xl bg-purple-500/20 text-purple-300 flex items-center justify-center shrink-0 font-bold">
+                            <i class="fa-solid fa-link"></i>
+                        </div>
+                        <div>
+                            <div class="text-xs text-purple-400 font-bold">ด่านที่ 2 • ปานกลาง</div>
+                            <div class="text-sm font-semibold text-white">จับคู่สารและผลกระทบ</div>
+                            <div class="text-[11px] text-slate-400">เชื่อมโยงกลไกเคมีให้ถูกต้อง</div>
+                        </div>
+                    </div>
+
+                    <div class="bg-slate-900/70 border border-amber-500/30 rounded-2xl p-3.5 flex sm:flex-col items-center sm:items-start gap-3">
+                        <div class="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-300 flex items-center justify-center shrink-0 font-bold">
+                            <i class="fa-solid fa-brain"></i>
+                        </div>
+                        <div>
+                            <div class="text-xs text-amber-400 font-bold">ด่านที่ 3 • ท้าทาย</div>
+                            <div class="text-sm font-semibold text-white">AR Quiz 5 ข้อ</div>
+                            <div class="text-[11px] text-slate-400">วิเคราะห์เจาะลึก 4 ตัวเลือก</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Start Controls -->
+                <div class="flex flex-col sm:flex-row items-center justify-center gap-3">
+                    <button onclick="startGame(true)" class="w-full sm:w-auto px-8 py-4 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-white font-bold text-lg shadow-lg glow-cyan transform hover:scale-105 active:scale-95 transition flex items-center justify-center gap-3">
+                        <i class="fa-solid fa-vr-cardboard text-xl"></i>
+                        <span>เปิดกล้อง AR เริ่มภารกิจ!</span>
+                    </button>
+
+                    <button onclick="startGame(false)" class="w-full sm:w-auto px-6 py-4 rounded-2xl bg-slate-800/90 hover:bg-slate-700 border border-slate-600 text-slate-200 font-semibold text-base transform hover:scale-105 active:scale-95 transition flex items-center justify-center gap-2">
+                        <i class="fa-solid fa-play text-cyan-400"></i>
+                        <span>เล่นโหมดจำลอง 3D</span>
+                    </button>
+                </div>
+                <p id="camera-status-hint" class="text-xs text-slate-400 mt-3">
+                    * ระบบจะสลับโจทย์และตัวเลือกใหม่ทุกครั้งที่เข้าเล่น
+                </p>
+            </div>
+        </section>
+
+        <!-- ==================== SCREEN 2: STAGE 1 (MEMORY FLIP CARDS) ==================== -->
+        <section id="screen-stage1" class="hidden w-full max-w-4xl mx-auto">
+            <div class="glass-hud rounded-3xl p-4 sm:p-6">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4 pb-3 border-b border-slate-700/70">
+                    <div>
+                        <span class="px-2.5 py-0.5 rounded-full text-xs font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-400/30">ด่านที่ 1 / 3 • ระดับง่าย</span>
+                        <h3 class="text-lg sm:text-xl font-bold text-white mt-1">เปิดแผ่นป้าย AR จับคู่ปฏิกิริยาเคมี (4 คู่)</h3>
+                    </div>
+                    <div class="text-xs sm:text-sm text-slate-300 bg-slate-900/70 px-3 py-2 rounded-xl border border-slate-700">
+                        จับคู่สำเร็จ: <span id="s1-matches" class="font-bold text-emerald-400">0</span> / 4 คู่
+                    </div>
+                </div>
+
+                <!-- 8 Cards Grid (4x2 on desktop, 2x4 on mobile) -->
+                <div id="s1-grid" class="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+                    <!-- Cards injected dynamically by JS -->
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== SCREEN 3: STAGE 2 (MATCHING PAIRS) ==================== -->
+        <section id="screen-stage2" class="hidden w-full max-w-4xl mx-auto">
+            <div class="glass-hud rounded-3xl p-4 sm:p-6">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4 pb-3 border-b border-slate-700/70">
+                    <div>
+                        <span class="px-2.5 py-0.5 rounded-full text-xs font-bold bg-purple-500/20 text-purple-300 border border-purple-400/30">ด่านที่ 2 / 3 • ระดับปานกลาง</span>
+                        <h3 class="text-lg sm:text-xl font-bold text-white mt-1">จับคู่ปฏิกิริยาเคมีกับกลไกหรือผลกระทบ</h3>
+                    </div>
+                    <div class="text-xs sm:text-sm text-slate-300 bg-slate-900/70 px-3 py-2 rounded-xl border border-slate-700">
+                        จับคู่สำเร็จ: <span id="s2-matches" class="font-bold text-emerald-400">0</span> / 5 คู่
+                    </div>
+                </div>
+
+                <p class="text-xs sm:text-sm text-cyan-200 mb-4 text-center bg-cyan-950/50 py-2 px-3 rounded-xl border border-cyan-500/20">
+                    <i class="fa-solid fa-hand-pointer mr-1"></i> แตะเลือกหัวข้อฝั่งซ้าย แล้วแตะคำอธิบายที่สัมพันธ์กันฝั่งขวา
+                </p>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
+                    <!-- Left Column: Terms -->
+                    <div class="space-y-2.5">
+                        <div class="text-xs font-bold uppercase tracking-wider text-cyan-400 px-1">ปรากฏการณ์ / สารเคมี</div>
+                        <div id="s2-left-col" class="space-y-2.5"></div>
+                    </div>
+
+                    <!-- Right Column: Descriptions -->
+                    <div class="space-y-2.5">
+                        <div class="text-xs font-bold uppercase tracking-wider text-amber-400 px-1">กลไก / ประโยชน์ / โทษ</div>
+                        <div id="s2-right-col" class="space-y-2.5"></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== SCREEN 4: STAGE 3 (5 MULTIPLE CHOICE QUIZ) ==================== -->
+        <section id="screen-stage3" class="hidden w-full max-w-3xl mx-auto">
+            <div class="glass-hud rounded-3xl p-5 sm:p-7">
+                <div class="flex items-center justify-between gap-2 mb-4 pb-3 border-b border-slate-700/70">
+                    <div>
+                        <span class="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-500/20 text-amber-300 border border-amber-400/30">ด่านที่ 3 / 3 • ระดับท้าทาย</span>
+                        <h3 class="text-lg sm:text-xl font-bold text-white mt-1">แบบทดสอบ AR วิเคราะห์ปฏิกิริยาเคมี</h3>
+                    </div>
+                    <div class="text-right">
+                        <span class="text-xs text-slate-400 block">ข้อที่</span>
+                        <span id="s3-q-counter" class="text-lg font-extrabold text-cyan-300">1 / 5</span>
+                    </div>
+                </div>
+
+                <!-- Progress Bar -->
+                <div class="w-full h-2 bg-slate-800 rounded-full overflow-hidden mb-5">
+                    <div id="s3-progress" class="h-full bg-gradient-to-r from-cyan-400 to-emerald-400 transition-all duration-300" style="width: 20%"></div>
+                </div>
+
+                <!-- Question Box -->
+                <div class="bg-slate-900/80 border border-cyan-500/30 rounded-2xl p-4 sm:p-5 mb-5">
+                    <div class="flex items-start gap-3">
+                        <div id="s3-q-icon" class="w-11 h-11 rounded-xl bg-cyan-500/20 text-cyan-300 flex items-center justify-center shrink-0 text-xl mt-0.5">
+                            <i class="fa-solid fa-atom"></i>
+                        </div>
+                        <p id="s3-q-text" class="text-base sm:text-lg font-semibold text-white leading-relaxed">
+                            กำลังโหลดคำถาม...
+                        </p>
+                    </div>
+                </div>
+
+                <!-- 4 Choices -->
+                <div id="s3-choices" class="grid grid-cols-1 gap-3">
+                    <!-- Choices injected dynamically -->
+                </div>
+
+                <!-- Instant Feedback Banner -->
+                <div id="s3-feedback" class="hidden mt-4 p-3.5 rounded-2xl text-sm font-medium flex items-center gap-3"></div>
+            </div>
+        </section>
+
+        <!-- ==================== SCREEN 5: STAGE TRANSITION MODAL ==================== -->
+        <section id="screen-transition" class="hidden w-full max-w-md mx-auto text-center">
+            <div class="glass-hud rounded-3xl p-6 sm:p-8 border-2 border-emerald-400/50 shadow-2xl">
+                <div id="trans-badge" class="w-20 h-20 mx-auto rounded-full bg-gradient-to-tr from-emerald-400 to-cyan-500 flex items-center justify-center text-4xl text-white shadow-lg mb-4 animate-bounce">
+                    <i class="fa-solid fa-check"></i>
+                </div>
+                <h3 id="trans-title" class="text-2xl sm:text-3xl font-extrabold text-white mb-2">ผ่านด่านที่ 1!</h3>
+                <p id="trans-subtitle" class="text-slate-300 text-sm mb-5">ยอดเยี่ยมมาก เตรียมตัวเข้าสู่ด่านต่อไปที่ท้าทายยิ่งขึ้น</p>
+
+                <div class="bg-slate-900/80 rounded-2xl p-4 mb-6 space-y-2 border border-slate-700/80 text-sm">
+                    <div class="flex justify-between">
+                        <span class="text-slate-400">คะแนนประจำด่าน:</span>
+                        <span id="trans-stage-score" class="font-bold text-cyan-300">+0 คะแนน</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-slate-400">โบนัสความเร็ว (เวลาเหลือ):</span>
+                        <span id="trans-time-bonus" class="font-bold text-amber-300">+0 คะแนน</span>
+                    </div>
+                    <div class="border-t border-slate-700 pt-2 flex justify-between text-base">
+                        <span class="font-bold text-white">คะแนนสะสมรวม:</span>
+                        <span id="trans-total-score" class="font-extrabold text-emerald-400">0 คะแนน</span>
+                    </div>
+                </div>
+
+                <button id="trans-next-btn" onclick="proceedNextStage()" class="w-full py-3.5 px-6 rounded-2xl bg-gradient-to-r from-emerald-500 to-cyan-600 hover:from-emerald-400 hover:to-cyan-500 text-white font-bold text-lg shadow-lg transition transform hover:scale-105">
+                    ลุยด่านต่อไป <i class="fa-solid fa-arrow-right ml-2"></i>
+                </button>
+            </div>
+        </section>
+
+        <!-- ==================== SCREEN 6: FINAL SUMMARY & BONUS ==================== -->
+        <section id="screen-summary" class="hidden w-full max-w-xl mx-auto text-center">
+            <div class="glass-hud rounded-3xl p-6 sm:p-8 border-2 border-amber-400/50 shadow-2xl relative overflow-hidden">
+                <!-- Trophy & Rank -->
+                <div class="w-24 h-24 mx-auto rounded-full bg-gradient-to-br from-amber-300 via-yellow-500 to-orange-600 flex items-center justify-center text-5xl text-slate-950 shadow-xl mb-4 animate-float">
+                    <i class="fa-solid fa-trophy"></i>
+                </div>
+
+                <div id="sum-rank-badge" class="inline-block px-4 py-1 rounded-full bg-amber-500/20 border border-amber-400/50 text-amber-300 text-xs font-bold uppercase tracking-wider mb-2">
+                    MASTER CHEMIST
+                </div>
+                <h2 class="text-2xl sm:text-4xl font-extrabold text-white mb-1">สรุปผลการปฏิบัติภารกิจ</h2>
+                <p id="sum-comment" class="text-slate-300 text-sm mb-6">คุณพิชิตความรู้เรื่องประโยชน์และโทษของปฏิกิริยาเคมีได้สำเร็จ!</p>
+
+                <!-- Score Breakdown Table -->
+                <div class="bg-slate-900/85 rounded-2xl p-4 sm:p-5 mb-6 border border-slate-700/80 text-left space-y-3 text-sm sm:text-base">
+                    <div class="flex justify-between items-center">
+                        <span class="text-slate-300"><i class="fa-solid fa-layer-group text-cyan-400 w-6"></i> ด่านที่ 1: เปิดแผ่นป้าย AR</span>
+                        <span id="sum-s1" class="font-bold text-white">0 คะแนน</span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-slate-300"><i class="fa-solid fa-link text-purple-400 w-6"></i> ด่านที่ 2: จับคู่ปฏิกิริยาเคมี</span>
+                        <span id="sum-s2" class="font-bold text-white">0 คะแนน</span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-slate-300"><i class="fa-solid fa-brain text-amber-400 w-6"></i> ด่านที่ 3: แบบทดสอบ 5 ข้อ</span>
+                        <span id="sum-s3" class="font-bold text-white">0 คะแนน</span>
+                    </div>
+                    <div class="border-t border-slate-700/80 pt-2.5 flex justify-between items-center text-amber-300">
+                        <span><i class="fa-solid fa-bolt text-amber-400 w-6"></i> คะแนนโบนัส (เวลา + คอมโบแม่นยำ)</span>
+                        <span id="sum-bonus" class="font-extrabold">+0 คะแนน</span>
+                    </div>
+                    <div class="border-t-2 border-slate-600 pt-3 flex justify-between items-center text-lg sm:text-xl">
+                        <span class="font-extrabold text-white">คะแนนรวมสุทธิ</span>
+                        <span id="sum-total" class="font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-emerald-300 to-cyan-300 text-2xl">0 คะแนน</span>
+                    </div>
+                </div>
+
+                <!-- Replay Button -->
+                <button onclick="resetAndPlayAgain()" class="w-full py-4 px-6 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white font-bold text-lg shadow-lg glow-cyan transform hover:scale-105 active:scale-95 transition flex items-center justify-center gap-2">
+                    <i class="fa-solid fa-rotate-right"></i>
+                    <span>เล่นใหม่อีกครั้ง (สุ่มโจทย์ใหม่ทั้งหมด)</span>
+                </button>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- CUSTOM MESSAGE TOAST (Replaces alert) -->
+    <div id="toast-msg" class="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 hidden px-5 py-3 rounded-2xl glass-hud border border-cyan-400/50 text-white text-sm font-semibold shadow-2xl transition-all">
+    </div>
+
+    <script>
+        /* ============================================================================
+           1. KNOWLEDGE BASE (จากเนื้อหาบทเรียน 3.2 ประโยชน์และโทษของปฏิกิริยาเคมี)
+           ============================================================================ */
+        
+        // ข้อมูลสำหรับด่านที่ 1: เปิดแผ่นป้าย (การ์ด 1 คู่ = การ์ดไอคอน/ชื่อเรื่อง + การ์ดสรุปสาระสำคัญ)
+        const STAGE1_POOL = [
+            {
+                id: 'wastewater',
+                title: 'การปรับสภาพน้ำทิ้ง',
+                category: 'ประโยชน์',
+                icon: 'fa-water',
+                color: 'from-cyan-500 to-blue-600',
+                desc: 'ใช้ปฏิกิริยากรดกับเบสปรับน้ำทิ้งโรงงานให้เป็นกลางก่อนปล่อยสู่แหล่งน้ำ'
+            },
+            {
+                id: 'combustion_heat',
+                title: 'การสร้างพลังงานความร้อน',
+                category: 'ประโยชน์',
+                icon: 'fa-fire-burner',
+                color: 'from-orange-500 to-amber-600',
+                desc: 'พลังงานความร้อนจากการเผาไหม้ใช้หุงต้มอาหาร ผลิตไฟฟ้า และขับเคลื่อนเครื่องยนต์'
+            },
+            {
+                id: 'antacid',
+                title: 'ยาลดกรดในกระเพาะอาหาร',
+                category: 'ประโยชน์',
+                icon: 'fa-pills',
+                color: 'from-emerald-500 to-teal-600',
+                desc: 'มีสารละลายแมกนีเซียมไฮดรอกไซด์ (เบส) ช่วยลดกรดในกระเพาะอาหาร'
+            },
+            {
+                id: 'stalactite',
+                title: 'การเกิดหินงอกหินย้อย',
+                category: 'ประโยชน์',
+                icon: 'fa-mountain',
+                color: 'from-indigo-500 to-purple-600',
+                desc: 'ปฏิกิริยาของกรดกับหินปูน (CaCO₃) เกิดความงดงามตามธรรมชาติและเป็นแหล่งท่องเที่ยว'
+            },
+            {
+                id: 'photosynthesis',
+                title: 'การสังเคราะห์ด้วยแสง',
+                category: 'ประโยชน์',
+                icon: 'fa-leaf',
+                color: 'from-green-500 to-emerald-600',
+                desc: 'สร้างแก๊สออกซิเจนสำหรับหายใจ และน้ำตาลกลูโคสที่เปลี่ยนเป็นพลังงานและแป้ง'
+            },
+            {
+                id: 'acid_rain',
+                title: 'ฝนกรด (Acid Rain)',
+                category: 'โทษ',
+                icon: 'fa-cloud-rain',
+                color: 'from-rose-500 to-red-600',
+                desc: 'แก๊ส SO₂ และ NO₂ ทำปฏิกิริยากับน้ำในอากาศ กัดกร่อนสิ่งปลูกสร้างและทำลายพืช'
+            },
+            {
+                id: 'rust',
+                title: 'สนิมเหล็ก',
+                category: 'โทษ',
+                icon: 'fa-wrench',
+                color: 'from-amber-600 to-red-700',
+                desc: 'ปฏิกิริยาระหว่างโลหะ น้ำ และแก๊สออกซิเจน ทำให้เหล็กผุกร่อนและความแข็งแรงลดลง'
+            },
+            {
+                id: 'smog',
+                title: 'หมอกควัน',
+                category: 'โทษ',
+                icon: 'fa-smog',
+                color: 'from-slate-500 to-zinc-700',
+                desc: 'เกิดจากการเผาไหม้เชื้อเพลิงฟอสซิลและไฟป่า มีฝุ่นละอองและแก๊สพิษบดบังการมองเห็น'
+            },
+            {
+                id: 'co_gas',
+                title: 'แก๊สคาร์บอนมอนอกไซด์',
+                category: 'โทษ',
+                icon: 'fa-skull-crossbones',
+                color: 'from-red-600 to-rose-800',
+                desc: 'เกิดจากการเผาไหม้ไม่สมบูรณ์ จับกับฮีโมโกลบินในเลือด ทำให้ร่างกายขาดออกซิเจน'
+            },
+            {
+                id: 'greenhouse',
+                title: 'แก๊สเรือนกระจก',
+                category: 'โทษ',
+                icon: 'fa-temperature-arrow-up',
+                color: 'from-orange-600 to-rose-600',
+                desc: 'กักเก็บรังสีอินฟราเรดไว้ในชั้นบรรยากาศ ทำให้อุณหภูมิโลกสูงขึ้นและปะการังฟอกขาว'
+            }
+        ];
+
+        // ข้อมูลสำหรับด่านที่ 2: จับคู่ (เชื่อมโยงหัวข้อ กับ กลไกทางเคมี/ผลกระทบ)
+        const STAGE2_POOL = [
+            {
+                id: 'm1',
+                left: 'ยาลดกรดในกระเพาะอาหาร',
+                right: 'ใช้สารละลายแมกนีเซียมไฮดรอกไซด์ที่มีสมบัติเป็นเบสสะเทินกรด'
+            },
+            {
+                id: 'm2',
+                left: 'การเกิดหินงอกหินย้อย',
+                right: 'กรดทำปฏิกิริยากับแคลเซียมคาร์บอเนต (CaCO₃) ในหินปูน'
+            },
+            {
+                id: 'm3',
+                left: 'การปรับสภาพน้ำทิ้งโรงงาน',
+                right: 'อาศัยปฏิกิริยาระหว่างกรดกับเบสปรับสภาพน้ำให้เป็นกลาง'
+            },
+            {
+                id: 'm4',
+                left: 'ฝนกรด',
+                right: 'แก๊สซัลเฟอร์ไดออกไซด์ (SO₂) และไนโตรเจนไดออกไซด์ (NO₂) รวมตัวกับน้ำ'
+            },
+            {
+                id: 'm5',
+                left: 'การเกิดสนิมเหล็ก',
+                right: 'ปฏิกิริยาระหว่างโลหะเหล็ก น้ำ และแก๊สออกซิเจน ทำให้โครงสร้างผุกร่อน'
+            },
+            {
+                id: 'm6',
+                left: 'แก๊สคาร์บอนมอนอกไซด์ (CO)',
+                right: 'เกิดจากการเผาไหม้ไม่สมบูรณ์ เข้าจับกับฮีโมโกลบินแทนออกซิเจน'
+            },
+            {
+                id: 'm7',
+                left: 'ปรากฏการณ์เรือนกระจก',
+                right: 'รังสีอินฟราเรดพลังงานต่ำไม่สามารถทะลุผ่านชั้นแก๊สเรือนกระจกออกไปได้'
+            },
+            {
+                id: 'm8',
+                left: 'การสังเคราะห์ด้วยแสง',
+                right: 'ได้แก๊สออกซิเจนและน้ำตาลกลูโคสซึ่งเปลี่ยนเป็นแป้งและพลังงาน'
+            },
+            {
+                id: 'm9',
+                left: 'ผลกระทบของภาวะโลกร้อน',
+                right: 'น้ำแข็งขั้วโลกละลาย ระดับน้ำทะเลสูงขึ้น และเกิดปะการังฟอกขาว'
+            }
+        ];
+
+        // ข้อมูลสำหรับด่านที่ 3: ข้อสอบ 4 ตัวเลือก (คลังข้อสอบ 10 ข้อ สุ่มมา 5 ข้อ และสลับตัวเลือกทุกครั้ง)
+        const STAGE3_POOL = [
+            {
+                q: 'ยาลดกรดในกระเพาะอาหารอาศัยสารชนิดใดและใช้หลักการทางเคมีใดในการรักษา?',
+                icon: 'fa-pills',
+                choices: [
+                    'แมกนีเซียมไฮดรอกไซด์ (สมบัติเป็นเบส) ทำปฏิกิริยาลดกรดในกระเพาะ',
+                    'แคลเซียมคาร์บอเนต (สมบัติเป็นกรด) ช่วยย่อยโปรตีนในกระเพาะ',
+                    'ซัลเฟอร์ไดออกไซด์ (สมบัติเป็นกลาง) เคลือบแผลในกระเพาะอาหาร',
+                    'คาร์บอนมอนอกไซด์ (สมบัติเป็นเบส) ลดอาการจุกเสียดแน่นท้อง'
+                ],
+                correctIndex: 0
+            },
+            {
+                q: 'ปรากฏการณ์ "หินงอกหินย้อย" ที่สวยงามในถ้ำ เกิดจากปฏิกิริยาเคมีระหว่างสารคู่ใด?',
+                icon: 'fa-mountain',
+                choices: [
+                    'กรด กับ สารประกอบคาร์บอเนต เช่น แคลเซียมคาร์บอเนต (CaCO₃)',
+                    'เบส กับ โลหะเหล็กและแก๊สออกซิเจนในอากาศ',
+                    'แก๊สมีเทน กับ รังสีอัลตราไวโอเลตจากดวงอาทิตย์',
+                    'น้ำตาลกลูโคส กับ แก๊สคาร์บอนไดออกไซด์ในน้ำใต้ดิน'
+                ],
+                correctIndex: 0
+            },
+            {
+                q: 'แก๊สชนิดใดเป็นสาเหตุหลักที่ทำให้เกิด "ฝนกรด" เมื่อทำปฏิกิริยากับน้ำในอากาศ?',
+                icon: 'fa-cloud-rain',
+                choices: [
+                    'แก๊สซัลเฟอร์ไดออกไซด์ (SO₂) และแก๊สไนโตรเจนไดออกไซด์ (NO₂)',
+                    'แก๊สออกซิเจน (O₂) และแก๊สไนโตรเจน (N₂)',
+                    'แก๊สมีเทน (CH₄) และแก๊สคลอโรฟลูออโรคาร์บอน (CFCs)',
+                    'แก๊สไฮโดรเจน (H₂) และไอน้ำบริสุทธิ์ในชั้นบรรยากาศ'
+                ],
+                correctIndex: 0
+            },
+            {
+                q: 'เหตุใดแก๊สคาร์บอนมอนอกไซด์ (CO) จากการเผาไหม้ไม่สมบูรณ์จึงเป็นอันตรายถึงชีวิต?',
+                icon: 'fa-skull-crossbones',
+                choices: [
+                    'เข้าจับกับฮีโมโกลบินของเม็ดเลือดแดง ทำให้ลำเลียงออกซิเจนได้ลดลง',
+                    'ทำปฏิกิริยากับน้ำในปอดกลายเป็นกรดกัดกร่อนเนื้อเยื่อทันที',
+                    'ทำให้กระดูกและฟันผุกร่อนคล้ายกับการเกิดสนิมเหล็ก',
+                    'สะสมในชั้นบรรยากาศและดูดซับรังสีอัลตราไวโอเลตไว้ที่ผิวหนัง'
+                ],
+                correctIndex: 0
+            },
+            {
+                q: 'กลไกของ "ปรากฏการณ์เรือนกระจก" เกิดขึ้นได้อย่างไรตามหลักวิทยาศาสตร์?',
+                icon: 'fa-temperature-high',
+                choices: [
+                    'รังสีอินฟราเรดพลังงานต่ำจากผิวโลกไม่สามารถทะลุผ่านชั้นแก๊สเรือนกระจกออกไปได้',
+                    'รังสีอัลตราไวโอเลตพลังงานสูงสะท้อนกลับสู่อวกาศทั้งหมดไม่ได้เข้าสู่โลก',
+                    'แก๊สออกซิเจนในชั้นบรรยากาศทำปฏิกิริยาเผาไหม้กับน้ำทะเลตลอดเวลา',
+                    'ชั้นโอโซนดูดซับความร้อนจากแกนโลกแล้วปล่อยออกมาที่พื้นผิว'
+                ],
+                correctIndex: 0
+            },
+            {
+                q: 'ข้อใดคือผลกระทบจากภาวะโลกร้อน (Global Warming) ที่ระบุไว้ในเนื้อหาบทเรียน?',
+                icon: 'fa-earth-americas',
+                choices: [
+                    'ระดับน้ำทะเลเพิ่มสูงขึ้น และเกิดปรากฏการณ์ปะการังฟอกขาว',
+                    'เกิดหินงอกหินย้อยในถ้ำเพิ่มมากขึ้นอย่างรวดเร็ว',
+                    'พืชสังเคราะห์ด้วยแสงได้มากขึ้นจนน้ำตาลกลูโคสล้นระบบนิเวศ',
+                    'น้ำในแหล่งน้ำธรรมชาติเปลี่ยนสภาพเป็นเบสเข้มข้นทั้งหมด'
+                ],
+                correctIndex: 0
+            },
+            {
+                q: 'การเกิด "ปะการังฟอกขาว" มีสาเหตุโดยตรงมาจากข้อใด?',
+                icon: 'fa-water',
+                choices: [
+                    'อุณหภูมิของน้ำทะเลเพิ่มขึ้น ทำให้สาหร่ายเซลล์เดียวในเนื้อเยื่อปะการังตาย',
+                    'เรือประมงปล่อยแก๊สคาร์บอนมอนอกไซด์ลงสู่ก้นทะเลโดยตรง',
+                    'โรงงานอุตสาหกรรมปรับสภาพน้ำทิ้งให้เป็นกลางก่อนปล่อยลงทะเล',
+                    'เกิดสนิมเหล็กใต้ท้องทะเลทำให้น้ำทะเลเปลี่ยนเป็นสีขาวขุ่น'
+                ],
+                correctIndex: 0
+            },
+            {
+                q: 'ปัจจัยใดบ้างที่จำเป็นต่อการเกิด "สนิมเหล็ก" ซึ่งทำให้โครงสร้างเหล็กผุกร่อน?',
+                icon: 'fa-wrench',
+                choices: [
+                    'โลหะเหล็ก น้ำ (ความชื้น) และแก๊สออกซิเจน',
+                    'โลหะเหล็ก แก๊สมีเทน และรังสีอินฟราเรด',
+                    'โลหะเหล็ก แคลเซียมคาร์บอเนต และแก๊สไนโตรเจน',
+                    'โลหะเหล็ก แมกนีเซียมไฮดรอกไซด์ และความร้อนสูง'
+                ],
+                correctIndex: 0
+            },
+            {
+                q: 'ก่อนปล่อยน้ำทิ้งจากโรงงานอุตสาหกรรมลงสู่แหล่งน้ำธรรมชาติ ควรทำอย่างไร?',
+                icon: 'fa-industry',
+                choices: [
+                    'ใช้ปฏิกิริยากรด-เบส ปรับสภาพน้ำทิ้งที่มีฤทธิ์กรดหรือเบสให้เป็นกลาง',
+                    'เติมแก๊สซัลเฟอร์ไดออกไซด์เพื่อฆ่าเชื้อโรคในน้ำทิ้งให้หมด',
+                    'เผาไหม้น้ำทิ้งด้วยความร้อนสูงเพื่อเปลี่ยนให้เป็นแก๊สเรือนกระจก',
+                    'เติมผงเหล็กเพื่อให้เกิดสนิมดูดซับสารพิษในบ่อบำบัด'
+                ],
+                correctIndex: 0
+            },
+            {
+                q: 'ข้อใดกล่าวถึง "แก๊สเรือนกระจก" ที่สำคัญได้ถูกต้องครบถ้วน?',
+                icon: 'fa-smog',
+                choices: [
+                    'CO₂, CFCs, CH₄ และ N₂O',
+                    'O₂, N₂, H₂ และ He',
+                    'CaCO₃, Mg(OH)₂, H₂O และ CO',
+                    'SO₂, O₂, Fe₂O₃ และ NaCl'
+                ],
+                correctIndex: 0
+            }
+        ];
+
+        /* ============================================================================
+           2. SOUND EFFECTS ENGINE (Tone.js Synthesized Audio)
+           ============================================================================ */
+        let audioReady = false;
+        let synth, polySynth;
+
+        async function initAudio() {
+            if (audioReady) return;
+            try {
+                await Tone.start();
+                synth = new Tone.Synth({
+                    oscillator: { type: 'triangle' },
+                    envelope: { attack: 0.01, decay: 0.15, sustain: 0.05, release: 0.2 }
+                }).toDestination();
+
+                polySynth = new Tone.PolySynth(Tone.Synth).toDestination();
+                audioReady = true;
+            } catch (e) {
+                console.warn('Audio init skipped:', e);
+            }
+        }
+
+        function playSound(type) {
+            if (!audioReady) return;
+            try {
+                const now = Tone.now();
+                if (type === 'flip') {
+                    synth.triggerAttackRelease('C5', '32n', now);
+                } else if (type === 'select') {
+                    synth.triggerAttackRelease('E5', '32n', now);
+                } else if (type === 'correct') {
+                    polySynth.triggerAttackRelease(['C5', 'E5', 'G5'], '16n', now);
+                } else if (type === 'wrong') {
+                    synth.triggerAttackRelease('A2', '16n', now);
+                } else if (type === 'levelup') {
+                    polySynth.triggerAttackRelease(['C5', 'E5', 'G5', 'C6'], '8n', now);
+                }
+            } catch (e) {}
+        }
+
+        /* ============================================================================
+           3. THREE.JS 3D FLOATING AR MOLECULES BACKGROUND
+           ============================================================================ */
+        let scene, camera, renderer, molecules = [];
+
+        function initThreeJS() {
+            const canvas = document.getElementById('three-canvas');
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 18;
+
+            renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true, antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+            // Lighting
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+            scene.add(ambientLight);
+            const dirLight = new THREE.DirectionalLight(0x38bdf8, 1.2);
+            dirLight.position.set(10, 15, 10);
+            scene.add(dirLight);
+
+            // Create 12 floating 3D chemical molecule clusters
+            const colors = [0x22d3ee, 0x34d399, 0xa855f7, 0xfbbf24, 0xf43f5e];
+            for (let i = 0; i < 12; i++) {
+                const group = new THREE.Group();
+                const mainColor = colors[i % colors.length];
+                
+                // Central Atom
+                const coreGeo = new THREE.IcosahedronGeometry(0.65, 1);
+                const coreMat = new THREE.MeshPhongMaterial({ 
+                    color: mainColor, 
+                    emissive: mainColor, 
+                    emissiveIntensity: 0.25,
+                    shininess: 80 
+                });
+                const core = new THREE.Mesh(coreGeo, coreMat);
+                group.add(core);
+
+                // Orbiting Atoms (H2O / CO2 style)
+                const subGeo = new THREE.SphereGeometry(0.32, 16, 16);
+                const subMat = new THREE.MeshPhongMaterial({ color: 0xffffff, shininess: 90 });
+                
+                const atom1 = new THREE.Mesh(subGeo, subMat);
+                atom1.position.set(1.1, 0.5, 0);
+                group.add(atom1);
+
+                const atom2 = new THREE.Mesh(subGeo, subMat);
+                atom2.position.set(-1.1, 0.5, 0);
+                group.add(atom2);
+
+                // Random position
+                group.position.set(
+                    (Math.random() - 0.5) * 28,
+                    (Math.random() - 0.5) * 18,
+                    (Math.random() - 0.5) * 10 - 4
+                );
+                group.userData = {
+                    rotSpeedX: (Math.random() - 0.5) * 0.015,
+                    rotSpeedY: (Math.random() - 0.5) * 0.015,
+                    floatOffset: Math.random() * Math.PI * 2
+                };
+                scene.add(group);
+                molecules.push(group);
+            }
+
+            window.addEventListener('resize', () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            });
+        }
+
+        function animateThreeJS() {
+            requestAnimationFrame(animateThreeJS);
+            const time = Date.now() * 0.001;
+            molecules.forEach(mol => {
+                mol.rotation.x += mol.userData.rotSpeedX;
+                mol.rotation.y += mol.userData.rotSpeedY;
+                mol.position.y += Math.sin(time + mol.userData.floatOffset) * 0.006;
+            });
+            renderer.render(scene, camera);
+        }
+
+        /* ============================================================================
+           4. AR CAMERA MANAGEMENT
+           ============================================================================ */
+        let arStream = null;
+        let isCameraActive = false;
+
+        async function enableARCamera() {
+            const videoEl = document.getElementById('ar-video');
+            const simBg = document.getElementById('ar-sim-bg');
+            try {
+                arStream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: 'environment' },
+                    audio: false
+                });
+                videoEl.srcObject = arStream;
+                videoEl.classList.remove('hidden');
+                simBg.classList.add('opacity-30');
+                isCameraActive = true;
+                showToast('เปิดกล้อง AR สำเร็จ! ส่องพื้นที่รอบตัวเพื่อเล่นได้เลย');
+            } catch (err) {
+                console.warn('Camera fallback to 3D AR mode:', err);
+                isCameraActive = false;
+                videoEl.classList.add('hidden');
+                simBg.classList.remove('opacity-30');
+                showToast('เข้าสู่โหมด AR จำลอง 3 มิติ (ไม่พบกล้องหรือไม่ได้รับอนุญาต)');
+            }
+        }
+
+        function disableARCamera() {
+            const videoEl = document.getElementById('ar-video');
+            const simBg = document.getElementById('ar-sim-bg');
+            if (arStream) {
+                arStream.getTracks().forEach(track => track.stop());
+                arStream = null;
+            }
+            videoEl.classList.add('hidden');
+            simBg.classList.remove('opacity-30');
+            isCameraActive = false;
+        }
+
+        async function toggleARCamera() {
+            if (isCameraActive) {
+                disableARCamera();
+                showToast('สลับเป็นโหมดพื้นหลัง AR 3D');
+            } else {
+                await enableARCamera();
+            }
+        }
+
+        /* ============================================================================
+           5. UTILITY FUNCTIONS (SHUFFLE, TIMER, TOAST, SCREEN SWITCH)
+           ============================================================================ */
+        function shuffleArray(array) {
+            const arr = [...array];
+            for (let i = arr.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [arr[i], arr[j]] = [arr[j], arr[i]];
+            }
+            return arr;
+        }
+
+        function showToast(msg) {
+            const toast = document.getElementById('toast-msg');
+            toast.textContent = msg;
+            toast.classList.remove('hidden');
+            clearTimeout(toast._timer);
+            toast._timer = setTimeout(() => {
+                toast.classList.add('hidden');
+            }, 2600);
+        }
+
+        function showScreen(screenId) {
+            const screens = ['screen-cover', 'screen-stage1', 'screen-stage2', 'screen-stage3', 'screen-transition', 'screen-summary'];
+            screens.forEach(id => document.getElementById(id).classList.add('hidden'));
+            document.getElementById(screenId).classList.remove('hidden');
+
+            const hud = document.getElementById('game-hud');
+            if (['screen-stage1', 'screen-stage2', 'screen-stage3'].includes(screenId)) {
+                hud.classList.remove('hidden');
+            } else {
+                hud.classList.add('hidden');
+            }
+        }
+
+        /* ============================================================================
+           6. GAME STATE & CORE ENGINE
+           ============================================================================ */
+        const gameState = {
+            currentStage: 1,
+            scores: { s1: 0, s2: 0, s3: 0 },
+            bonusScore: 0,
+            streak: 0,
+            timeLeft: 0,
+            timerInterval: null
+        };
+
+        function updateHUDScore() {
+            const total = gameState.scores.s1 + gameState.scores.s2 + gameState.scores.s3 + gameState.bonusScore;
+            document.getElementById('hud-score').textContent = total;
+        }
+
+        function startTimer(seconds, onTimeoutCallback) {
+            clearInterval(gameState.timerInterval);
+            gameState.timeLeft = seconds;
+            renderTimer();
+
+            gameState.timerInterval = setInterval(() => {
+                gameState.timeLeft--;
+                renderTimer();
+                if (gameState.timeLeft <= 0) {
+                    clearInterval(gameState.timerInterval);
+                    onTimeoutCallback();
+                }
+            }, 1000);
+        }
+
+        function renderTimer() {
+            const mins = String(Math.floor(Math.max(0, gameState.timeLeft) / 60)).padStart(2, '0');
+            const secs = String(Math.max(0, gameState.timeLeft) % 60).padStart(2, '0');
+            const timerEl = document.getElementById('hud-timer');
+            timerEl.textContent = `${mins}:${secs}`;
+            if (gameState.timeLeft <= 10) {
+                timerEl.classList.add('text-rose-400');
+                timerEl.classList.remove('text-amber-300');
+            } else {
+                timerEl.classList.remove('text-rose-400');
+                timerEl.classList.add('text-amber-300');
+            }
+        }
+
+        async function startGame(useCamera) {
+            await initAudio();
+            playSound('select');
+
+            if (useCamera) {
+                await enableARCamera();
+            }
+
+            // Reset scores & state
+            gameState.currentStage = 1;
+            gameState.scores = { s1: 0, s2: 0, s3: 0 };
+            gameState.bonusScore = 0;
+            gameState.streak = 0;
+            updateHUDScore();
+
+            initStage1();
+        }
+
+        /* ============================================================================
+           STAGE 1: FLIP CARDS (เปิดแผ่นป้าย 4 คู่ = 8 ใบ, เวลา 60 วินาที)
+           ============================================================================ */
+        let s1FlippedCards = [];
+        let s1MatchedCount = 0;
+        let s1LockBoard = false;
+
+        function initStage1() {
+            gameState.currentStage = 1;
+            document.getElementById('hud-stage-icon').textContent = '1';
+            document.getElementById('hud-stage-title').textContent = 'ด่านที่ 1: เปิดแผ่นป้าย AR';
+            showScreen('screen-stage1');
+
+            s1FlippedCards = [];
+            s1MatchedCount = 0;
+            s1LockBoard = false;
+            document.getElementById('s1-matches').textContent = '0';
+
+            // สุ่มเลือก 4 เรื่องจากคลังเนื้อหา
+            const selectedTopics = shuffleArray(STAGE1_POOL).slice(0, 4);
+            let cardsDeck = [];
+
+            selectedTopics.forEach(item => {
+                // Card Type A: ชื่อปฏิกิริยา + ไอคอน
+                cardsDeck.push({
+                    pairId: item.id,
+                    type: 'title',
+                    title: item.title,
+                    category: item.category,
+                    icon: item.icon,
+                    color: item.color
+                });
+                // Card Type B: คำอธิบายกลไก/ผล
+                cardsDeck.push({
+                    pairId: item.id,
+                    type: 'desc',
+                    desc: item.desc,
+                    category: item.category
+                });
+            });
+
+            // สลับตำแหน่งการ์ดทั้ง 8 ใบ
+            cardsDeck = shuffleArray(cardsDeck);
+
+            const grid = document.getElementById('s1-grid');
+            grid.innerHTML = '';
+
+            cardsDeck.forEach((card, idx) => {
+                const cardEl = document.createElement('div');
+                cardEl.className = 'flip-card h-36 sm:h-44 cursor-pointer perspective-1000';
+                cardEl.dataset.pairId = card.pairId;
+                cardEl.dataset.index = idx;
+
+                const badgeColor = card.category === 'ประโยชน์' ? 'bg-emerald-500/30 text-emerald-300 border-emerald-400/40' : 'bg-rose-500/30 text-rose-300 border-rose-400/40';
+
+                let backContent = '';
+                if (card.type === 'title') {
+                    backContent = `
+                        <div class="w-11 h-11 rounded-xl bg-gradient-to-br ${card.color} flex items-center justify-center text-white text-xl mb-2 shadow">
+                            <i class="fa-solid ${card.icon}"></i>
+                        </div>
+                        <span class="text-[10px] px-2 py-0.5 rounded-full border ${badgeColor} mb-1">${card.category}</span>
+                        <div class="text-xs sm:text-sm font-bold text-white leading-snug px-1">${card.title}</div>
+                    `;
+                } else {
+                    backContent = `
+                        <span class="text-[10px] px-2 py-0.5 rounded-full border ${badgeColor} mb-1.5">คำอธิบาย</span>
+                        <div class="text-[11px] sm:text-xs text-slate-100 leading-snug px-1.5">${card.desc}</div>
+                    `;
+                }
+
+                cardEl.innerHTML = `
+                    <div class="flip-card-inner">
+                        <!-- Front of Card (AR Target Marker) -->
+                        <div class="flip-card-front glass-card border-2 border-cyan-400/40 flex flex-col items-center justify-center p-3 hover:border-cyan-300">
+                            <div class="w-12 h-12 rounded-2xl bg-cyan-500/15 border border-cyan-400/30 flex items-center justify-center text-cyan-300 text-2xl mb-2">
+                                <i class="fa-solid fa-qrcode"></i>
+                            </div>
+                            <span class="text-xs font-bold text-cyan-200 tracking-wider">AR CARD #${idx + 1}</span>
+                            <span class="text-[10px] text-slate-400 mt-0.5">แตะเพื่อสแกน</span>
+                        </div>
+                        <!-- Back of Card -->
+                        <div class="flip-card-back bg-slate-800/95 border-2 border-cyan-400/70 flex flex-col items-center justify-center p-2.5 shadow-xl">
+                            ${backContent}
+                        </div>
+                    </div>
+                `;
+
+                cardEl.addEventListener('click', () => handleStage1Flip(cardEl));
+                grid.appendChild(cardEl);
+            });
+
+            startTimer(60, () => {
+                showToast('หมดเวลาด่านที่ 1! สรุปคะแนนด่านนี้');
+                finishStage(1);
+            });
+        }
+
+        function handleStage1Flip(cardEl) {
+            if (s1LockBoard) return;
+            if (cardEl.classList.contains('flipped') || cardEl.classList.contains('matched')) return;
+
+            playSound('flip');
+            cardEl.classList.add('flipped');
+            s1FlippedCards.push(cardEl);
+
+            if (s1FlippedCards.length === 2) {
+                s1LockBoard = true;
+                const [c1, c2] = s1FlippedCards;
+
+                if (c1.dataset.pairId === c2.dataset.pairId) {
+                    // Match!
+                    setTimeout(() => {
+                        playSound('correct');
+                        c1.classList.add('matched');
+                        c2.classList.add('matched');
+                        c1.querySelector('.flip-card-back').classList.add('border-emerald-400', 'bg-emerald-950/80');
+                        c2.querySelector('.flip-card-back').classList.add('border-emerald-400', 'bg-emerald-950/80');
+
+                        s1MatchedCount++;
+                        gameState.scores.s1 += 100;
+                        gameState.streak++;
+                        if (gameState.streak >= 2) {
+                            gameState.bonusScore += 25;
+                        }
+                        updateHUDScore();
+                        document.getElementById('s1-matches').textContent = s1MatchedCount;
+
+                        s1FlippedCards = [];
+                        s1LockBoard = false;
+
+                        if (s1MatchedCount === 4) {
+                            clearInterval(gameState.timerInterval);
+                            setTimeout(() => finishStage(1), 600);
+                        }
+                    }, 350);
+                } else {
+                    // Not Match
+                    gameState.streak = 0;
+                    setTimeout(() => {
+                        playSound('wrong');
+                        c1.classList.remove('flipped');
+                        c2.classList.remove('flipped');
+                        s1FlippedCards = [];
+                        s1LockBoard = false;
+                    }, 950);
+                }
+            }
+        }
+
+        /* ============================================================================
+           STAGE 2: MATCHING PAIRS (จับคู่ 5 คู่, เวลา 65 วินาที)
+           ============================================================================ */
+        let s2SelectedLeft = null;
+        let s2MatchedCount = 0;
+
+        function initStage2() {
+            gameState.currentStage = 2;
+            document.getElementById('hud-stage-icon').textContent = '2';
+            document.getElementById('hud-stage-title').textContent = 'ด่านที่ 2: จับคู่กลไกเคมี';
+            showScreen('screen-stage2');
+
+            s2SelectedLeft = null;
+            s2MatchedCount = 0;
+            document.getElementById('s2-matches').textContent = '0';
+
+            // สุ่มเลือก 5 คู่จากคลัง
+            const selectedPairs = shuffleArray(STAGE2_POOL).slice(0, 5);
+            const leftItems = shuffleArray(selectedPairs.map(p => ({ id: p.id, text: p.left })));
+            const rightItems = shuffleArray(selectedPairs.map(p => ({ id: p.id, text: p.right })));
+
+            const leftCol = document.getElementById('s2-left-col');
+            const rightCol = document.getElementById('s2-right-col');
+            leftCol.innerHTML = '';
+            rightCol.innerHTML = '';
+
+            leftItems.forEach(item => {
+                const btn = document.createElement('button');
+                btn.className = 'w-full text-left p-3.5 rounded-2xl glass-card border border-cyan-500/30 hover:border-cyan-400 text-sm sm:text-base font-semibold text-white flex items-center justify-between gap-2';
+                btn.dataset.id = item.id;
+                btn.innerHTML = `
+                    <span>${item.text}</span>
+                    <i class="fa-solid fa-circle-dot text-cyan-400 shrink-0"></i>
+                `;
+                btn.onclick = () => selectStage2Left(btn);
+                leftCol.appendChild(btn);
+            });
+
+            rightItems.forEach(item => {
+                const btn = document.createElement('button');
+                btn.className = 'w-full text-left p-3.5 rounded-2xl glass-card border border-amber-500/30 hover:border-amber-400 text-xs sm:text-sm text-slate-100 flex items-center gap-2.5';
+                btn.dataset.id = item.id;
+                btn.innerHTML = `
+                    <i class="fa-solid fa-diamond text-amber-400 shrink-0 text-xs"></i>
+                    <span>${item.text}</span>
+                `;
+                btn.onclick = () => selectStage2Right(btn);
+                rightCol.appendChild(btn);
+            });
+
+            startTimer(65, () => {
+                showToast('หมดเวลาด่านที่ 2! สรุปคะแนนด่านนี้');
+                finishStage(2);
+            });
+        }
+
+        function selectStage2Left(btn) {
+            if (btn.disabled) return;
+            playSound('select');
+
+            // Clear previous selection
+            document.querySelectorAll('#s2-left-col button').forEach(b => {
+                if (!b.disabled) b.classList.remove('ring-2', 'ring-cyan-400', 'bg-cyan-900/60');
+            });
+
+            btn.classList.add('ring-2', 'ring-cyan-400', 'bg-cyan-900/60');
+            s2SelectedLeft = btn;
+        }
+
+        function selectStage2Right(rightBtn) {
+            if (rightBtn.disabled) return;
+            if (!s2SelectedLeft) {
+                showToast('กรุณาแตะเลือกหัวข้อฝั่งซ้ายก่อนครับ');
+                return;
+            }
+
+            if (s2SelectedLeft.dataset.id === rightBtn.dataset.id) {
+                // Correct Pair!
+                playSound('correct');
+                s2SelectedLeft.disabled = true;
+                rightBtn.disabled = true;
+
+                s2SelectedLeft.classList.remove('ring-2', 'ring-cyan-400', 'bg-cyan-900/60');
+                s2SelectedLeft.classList.add('bg-emerald-900/60', 'border-emerald-400', 'text-emerald-200', 'opacity-80');
+                rightBtn.classList.add('bg-emerald-900/60', 'border-emerald-400', 'text-emerald-200', 'opacity-80');
+
+                s2MatchedCount++;
+                gameState.scores.s2 += 120;
+                gameState.streak++;
+                if (gameState.streak >= 2) {
+                    gameState.bonusScore += 30;
+                }
+                updateHUDScore();
+                document.getElementById('s2-matches').textContent = s2MatchedCount;
+                s2SelectedLeft = null;
+
+                if (s2MatchedCount === 5) {
+                    clearInterval(gameState.timerInterval);
+                    setTimeout(() => finishStage(2), 600);
+                }
+            } else {
+                // Incorrect Pair
+                playSound('wrong');
+                gameState.streak = 0;
+                rightBtn.classList.add('ring-2', 'ring-rose-500', 'bg-rose-950/60');
+                setTimeout(() => {
+                    rightBtn.classList.remove('ring-2', 'ring-rose-500', 'bg-rose-950/60');
+                }, 450);
+            }
+        }
+
+        /* ============================================================================
+           STAGE 3: 5 MULTIPLE CHOICE QUESTIONS (4 ตัวเลือก 5 ข้อ, เวลา 75 วินาที)
+           ============================================================================ */
+        let s3Questions = [];
+        let s3CurrentIndex = 0;
+        let s3Answering = false;
+
+        function initStage3() {
+            gameState.currentStage = 3;
+            document.getElementById('hud-stage-icon').textContent = '3';
+            document.getElementById('hud-stage-title').textContent = 'ด่านที่ 3: AR Quiz 5 ข้อ';
+            showScreen('screen-stage3');
+
+            // สุ่มข้อสอบ 5 ข้อจากคลัง และสลับลำดับตัวเลือกในแต่ละข้อ
+            const picked = shuffleArray(STAGE3_POOL).slice(0, 5);
+            s3Questions = picked.map(item => {
+                const mappedChoices = item.choices.map((text, i) => ({
+                    text,
+                    isCorrect: i === item.correctIndex
+                }));
+                return {
+                    q: item.q,
+                    icon: item.icon,
+                    choices: shuffleArray(mappedChoices)
+                };
+            });
+
+            s3CurrentIndex = 0;
+            s3Answering = false;
+            renderStage3Question();
+
+            startTimer(75, () => {
+                showToast('หมดเวลาด่านที่ 3! สรุปคะแนนรวมทั้งหมด');
+                finishStage(3);
+            });
+        }
+
+        function renderStage3Question() {
+            const qObj = s3Questions[s3CurrentIndex];
+            document.getElementById('s3-q-counter').textContent = `${s3CurrentIndex + 1} / 5`;
+            document.getElementById('s3-progress').style.width = `${((s3CurrentIndex + 1) / 5) * 100}%`;
+            document.getElementById('s3-q-icon').innerHTML = `<i class="fa-solid ${qObj.icon}"></i>`;
+            document.getElementById('s3-q-text').textContent = qObj.q;
+
+            const feedbackEl = document.getElementById('s3-feedback');
+            feedbackEl.classList.add('hidden');
+
+            const choicesContainer = document.getElementById('s3-choices');
+            choicesContainer.innerHTML = '';
+
+            const labels = ['ก', 'ข', 'ค', 'ง'];
+            qObj.choices.forEach((choice, idx) => {
+                const btn = document.createElement('button');
+                btn.className = 'w-full text-left p-3.5 sm:p-4 rounded-2xl glass-card border border-slate-600/80 hover:border-cyan-400 hover:bg-slate-800/90 flex items-center gap-3.5 transition';
+                btn.innerHTML = `
+                    <span class="w-8 h-8 rounded-xl bg-cyan-500/20 border border-cyan-400/40 text-cyan-300 font-bold flex items-center justify-center shrink-0">
+                        ${labels[idx]}
+                    </span>
+                    <span class="text-sm sm:text-base text-white font-medium leading-snug">${choice.text}</span>
+                `;
+                btn.onclick = () => handleStage3Answer(btn, choice.isCorrect);
+                choicesContainer.appendChild(btn);
+            });
+        }
+
+        function handleStage3Answer(selectedBtn, isCorrect) {
+            if (s3Answering) return;
+            s3Answering = true;
+
+            const allBtns = document.querySelectorAll('#s3-choices button');
+            const qObj = s3Questions[s3CurrentIndex];
+            const feedbackEl = document.getElementById('s3-feedback');
+
+            allBtns.forEach((btn, idx) => {
+                btn.disabled = true;
+                if (qObj.choices[idx].isCorrect) {
+                    btn.classList.add('bg-emerald-900/70', 'border-emerald-400', 'ring-2', 'ring-emerald-400');
+                }
+            });
+
+            if (isCorrect) {
+                playSound('correct');
+                gameState.scores.s3 += 150;
+                gameState.streak++;
+                let bonusText = '';
+                if (gameState.streak >= 2) {
+                    gameState.bonusScore += 40;
+                    bonusText = ' (+40 โบนัสตอบถูกต่อเนื่อง!)';
+                }
+                updateHUDScore();
+
+                feedbackEl.className = 'mt-4 p-3.5 rounded-2xl text-sm font-semibold flex items-center gap-3 bg-emerald-950/80 border border-emerald-400/50 text-emerald-200';
+                feedbackEl.innerHTML = `<i class="fa-solid fa-circle-check text-emerald-400 text-xl"></i> <span>ถูกต้อง! ยอดเยี่ยมมาก +150 คะแนน${bonusText}</span>`;
+            } else {
+                playSound('wrong');
+                gameState.streak = 0;
+                selectedBtn.classList.add('bg-rose-950/80', 'border-rose-500', 'ring-2', 'ring-rose-500');
+
+                feedbackEl.className = 'mt-4 p-3.5 rounded-2xl text-sm font-semibold flex items-center gap-3 bg-rose-950/80 border border-rose-500/50 text-rose-200';
+                feedbackEl.innerHTML = `<i class="fa-solid fa-circle-xmark text-rose-400 text-xl"></i> <span>ยังไม่ถูก! ดูคำตอบที่ถูกต้องในกรอบสีเขียว</span>`;
+            }
+
+            feedbackEl.classList.remove('hidden');
+
+            setTimeout(() => {
+                s3CurrentIndex++;
+                if (s3CurrentIndex < 5) {
+                    s3Answering = false;
+                    renderStage3Question();
+                } else {
+                    clearInterval(gameState.timerInterval);
+                    finishStage(3);
+                }
+            }, 1350);
+        }
+
+        /* ============================================================================
+           7. STAGE TRANSITION & FINAL SUMMARY
+           ============================================================================ */
+        function finishStage(stageNum) {
+            clearInterval(gameState.timerInterval);
+            playSound('levelup');
+
+            // คำนวณโบนัสเวลาที่เหลือ (วินาทีละ 5 คะแนน)
+            const timeBonus = Math.max(0, gameState.timeLeft) * 5;
+            gameState.bonusScore += timeBonus;
+            updateHUDScore();
+
+            if (stageNum === 1 || stageNum === 2) {
+                const stageScore = stageNum === 1 ? gameState.scores.s1 : gameState.scores.s2;
+                const totalNow = gameState.scores.s1 + gameState.scores.s2 + gameState.scores.s3 + gameState.bonusScore;
+
+                document.getElementById('trans-title').textContent = `สำเร็จภารกิจด่านที่ ${stageNum}!`;
+                document.getElementById('trans-subtitle').textContent = stageNum === 1
+                    ? 'เตรียมพร้อมสู่ด่านที่ 2: จับคู่กลไกและผลกระทบ (ระดับปานกลาง)'
+                    : 'ยอดเยี่ยม! เตรียมตัวเข้าสู่ด่านสุดท้าย: AR Quiz 5 ข้อ (ระดับท้าทาย)';
+
+                document.getElementById('trans-stage-score').textContent = `+${stageScore} คะแนน`;
+                document.getElementById('trans-time-bonus').textContent = `+${timeBonus} คะแนน (${gameState.timeLeft} วิ)`;
+                document.getElementById('trans-total-score').textContent = `${totalNow} คะแนน`;
+
+                showScreen('screen-transition');
+            } else {
+                showFinalSummary();
+            }
+        }
+
+        function proceedNextStage() {
+            playSound('select');
+            if (gameState.currentStage === 1) {
+                initStage2();
+            } else if (gameState.currentStage === 2) {
+                initStage3();
+            }
+        }
+
+        function showFinalSummary() {
+            const { s1, s2, s3 } = gameState.scores;
+            const bonus = gameState.bonusScore;
+            const total = s1 + s2 + s3 + bonus;
+
+            document.getElementById('sum-s1').textContent = `${s1} คะแนน`;
+            document.getElementById('sum-s2').textContent = `${s2} คะแนน`;
+            document.getElementById('sum-s3').textContent = `${s3} คะแนน`;
+            document.getElementById('sum-bonus').textContent = `+${bonus} คะแนน`;
+            document.getElementById('sum-total').textContent = `${total} คะแนน`;
+
+            // Rank Evaluation
+            const rankBadge = document.getElementById('sum-rank-badge');
+            const comment = document.getElementById('sum-comment');
+
+            if (total >= 1800) {
+                rankBadge.textContent = 'RANK S • SUPREME AR SCIENTIST';
+                comment.textContent = 'สุดยอดอัจฉริยะเคมี! คุณแม่นยำและรวดเร็วระดับปรมาจารย์';
+            } else if (total >= 1300) {
+                rankBadge.textContent = 'RANK A • EXPERT CHEMIST';
+                comment.textContent = 'เก่งมาก! คุณเข้าใจประโยชน์และโทษของปฏิกิริยาเคมีเป็นอย่างดี';
+            } else if (total >= 800) {
+                rankBadge.textContent = 'RANK B • JUNIOR RESEARCHER';
+                comment.textContent = 'ทำได้ดี! ลองเล่นอีกครั้งเพื่อทำเวลาและเก็บคะแนนโบนัสให้สูงขึ้น';
+            } else {
+                rankBadge.textContent = 'RANK C • LAB TRAINEE';
+                comment.textContent = 'เริ่มต้นได้ดี! ทบทวนเนื้อหาแล้วลองท้าทายภารกิจใหม่อีกครั้งนะ';
+            }
+
+            showScreen('screen-summary');
+        }
+
+        function resetAndPlayAgain() {
+            playSound('select');
+            gameState.currentStage = 1;
+            gameState.scores = { s1: 0, s2: 0, s3: 0 };
+            gameState.bonusScore = 0;
+            gameState.streak = 0;
+            updateHUDScore();
+            initStage1();
+        }
+
+        // Start 3D Background Animation on Window Load
+        window.onload = function () {
+            initThreeJS();
+            animateThreeJS();
+        };
+    </script>
+</body>
+</html>
